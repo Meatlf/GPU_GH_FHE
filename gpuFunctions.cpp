@@ -218,30 +218,6 @@ static void gpuDumpTimes(uint32_t blocks, uint32_t kernels, uint32_t *times) {
 }
 
 
-
-/* Takes two integer 0<=n<d, and returns an nBits-bit integer, with
-* the top bit viewed as the bit to the left of the binary point,
-* and the lower bits are viewed as being to the right of the point.
-* 
-* The returned value is the binary representation of the rational
-* number n/d, rounded to precision nBits-1.
-********************************************************************/
-static inline unsigned long getBinaryRep(ZZ n, const ZZ& d, long nBits)
-   // It is assumed that nBits fit in one long integer.
-{
-   // (n * 2^nBits)/d gives nBits bits of precision (one more than needed)
-   n <<= nBits;
-   n /= d;         // integer division implies truncation
-
-   unsigned long sn = to_long(n); // a single precision variant
-   sn = (sn >> 1) + (sn & 1);     // one less bit, but round instead of truncate
-   // NOTE: the addition of (sn&1) could make sn as large as 2^{nBits}. For
-   // this case we need to remember the bit to the left of the binary point.
-
-   return sn;
-}
-
-
 void gpuMultiply(uint32_t *gpuX, uint32_t xLength, uint32_t *gpuY, uint32_t yLength, uint32_t *gpuZ, uint32_t samples) {
    uint32_t     *times;
    uint2       *gpuA, *gpuB, *gpuC, *gpuD, *gpuE, *gpuF, *gpuOut;
@@ -382,36 +358,40 @@ void Multiply(uint32_t *x, uint32_t xLength, uint32_t *y, uint32_t yLength, uint
    $GPU(cudaFree(gpuZ));
 }
 
-void testMultiply()
-{
-   uint32_t* a = (uint32_t*)malloc(4096*1024);
-   uint32_t* b = (uint32_t*)malloc(4096*1024);
-   uint32_t* c = (uint32_t*)malloc(4096*1024*2);
+void testMultiply(int samples) {
+   int          words, index;
+   uint32_t    *x, *y, *z;
+   mpz_t        mpa, mpb, mpr;
 
-   memset(a,0,4096*1024);
-   a[0] = 50;
-   b[0] = 20;
-   memset(c,0,4096*1024*2);
-   /*Multiply(a,4096*1024/4 , b, 4096*1024/4,c,4096*1024);
-   printf("test mul 4096 = %u...%u\n",c[4096*1024*2/4-1],c[0]);
-   
-   for (int i = 0; i < 4096*1024/4; i ++)
-   {
-      if (c[i]!=b[i])
-      {
-         printf("c = %u, b = %u, in %d\n",c[i],b[i],i);
-         getchar();
-      }
+   if(samples<=128*1024)
+    words=samples/8*3;
+   else
+    words=samples/4;
+
+   mpz_init(mpa);
+   mpz_init(mpb);
+   mpz_init(mpr);
+
+   x=(uint32_t *)malloc(sizeof(uint32_t)*words);
+   y=(uint32_t *)malloc(sizeof(uint32_t)*words);
+   z=(uint32_t *)malloc(sizeof(uint32_t)*words*2);
+
+   for(index=0;index<words;index++) {
+	x[index]=(rand()<<16)^rand();
+	y[index]=(rand()<<16)^rand();
    }
 
-   memset(c,0,4096*1024*2);*/
-   Multiply(a,1024*1024/4 , b, 1024*1024/4,c,2048*1024);
-   printf("test mul 2048 = %d\n",c[0]);
-   for (int i = 0; i < 20; i++)printf("%d",c[i]);
-   free(a);
-   free(b);
-   free(c);
+   gpuMultiply(x, words, y, words, z, samples);
+
+   mpz_import(mpa, words, -1, 4, 0, 0, x);
+   mpz_import(mpb, words, -1, 4, 0, 0, y);
+   mpz_import(mpr, 2*words, -1, 4, 0, 0, z);
+
+   mpz_mul(mpa, mpa, mpb);
+   if(mpz_cmp(mpa, mpr)!=0)
+    printf("Haha, wrong!\n");
 }
+
 
 //********************GPU codes for ProcessBlock*********************/
 //This code has the same precedure with Gentry's code, you can refer to
